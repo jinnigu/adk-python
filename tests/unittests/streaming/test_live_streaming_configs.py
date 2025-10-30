@@ -642,3 +642,103 @@ def test_streaming_with_context_window_compression_config():
       llm_request_sent_to_mock.live_connect_config.context_window_compression.sliding_window.target_tokens
       == 500
   )
+
+
+def test_single_agent_live_streaming_with_transcription():
+  """Test single-agent streaming adds transcription configs when not provided."""
+  response1 = LlmResponse(
+      turn_complete=True,
+  )
+
+  mock_model = testing_utils.MockModel.create([response1])
+
+  root_agent = Agent(
+      name='single_agent',
+      model=mock_model,
+      tools=[],
+  )
+
+  runner = testing_utils.InMemoryRunner(root_agent=root_agent)
+
+  # Test without passing any run_config to verify default behavior
+  # The logic in _new_invocation_context_for_live should automatically add
+  # transcription configs for live streaming
+  live_request_queue = LiveRequestQueue()
+  live_request_queue.send_realtime(
+      blob=types.Blob(data=b'\x00\xFF', mime_type='audio/pcm')
+  )
+
+  res_events = runner.run_live(live_request_queue)
+
+  assert res_events is not None, 'Expected a list of events, got None.'
+  assert (
+      len(res_events) > 0
+  ), 'Expected at least one response, but got an empty list.'
+  assert len(mock_model.requests) == 1
+
+  # Get the request that was captured
+  llm_request_sent_to_mock = mock_model.requests[0]
+
+  # Assert that transcription configs were added
+  assert llm_request_sent_to_mock.live_connect_config is not None
+  assert (
+      llm_request_sent_to_mock.live_connect_config.output_audio_transcription
+      is not None
+  )
+  assert (
+      llm_request_sent_to_mock.live_connect_config.input_audio_transcription
+      is not None
+  )
+
+
+def test_single_agent_live_streaming_respects_explicit_transcription():
+  """Test that single-agent live streaming respects explicitly provided transcription configs."""
+  response1 = LlmResponse(
+      turn_complete=True,
+  )
+
+  mock_model = testing_utils.MockModel.create([response1])
+
+  # Create a single agent (no sub_agents)
+  root_agent = Agent(
+      name='single_agent',
+      model=mock_model,
+      tools=[],
+  )
+
+  runner = testing_utils.InMemoryRunner(root_agent=root_agent)
+
+  # Create run config with input and output audio transcription
+  explicit_output_config = types.AudioTranscriptionConfig()
+  explicit_input_config = types.AudioTranscriptionConfig()
+  run_config = RunConfig(
+      output_audio_transcription=explicit_output_config,
+      input_audio_transcription=explicit_input_config,
+  )
+
+  live_request_queue = LiveRequestQueue()
+  live_request_queue.send_realtime(
+      blob=types.Blob(data=b'\x00\xFF', mime_type='audio/pcm')
+  )
+
+  res_events = runner.run_live(live_request_queue, run_config)
+
+  assert res_events is not None, 'Expected a list of events, got None.'
+  assert (
+      len(res_events) > 0
+  ), 'Expected at least one response, but got an empty list.'
+  assert len(mock_model.requests) == 1
+
+  # Get the request that was captured
+  llm_request_sent_to_mock = mock_model.requests[0]
+
+  # Assert that the explicit configs were used
+  assert llm_request_sent_to_mock.live_connect_config is not None
+  assert (
+      llm_request_sent_to_mock.live_connect_config.output_audio_transcription
+      is explicit_output_config
+  )
+  assert (
+      llm_request_sent_to_mock.live_connect_config.input_audio_transcription
+      is explicit_input_config
+  )
